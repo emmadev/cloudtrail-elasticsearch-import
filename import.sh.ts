@@ -25,6 +25,7 @@ import debug from 'debug';
 import * as crypto from 'crypto';
 import * as t from 'io-ts';
 import Either from "fp-ts/lib/Either";
+import { reporter as report } from "io-ts-reporters";
 import {ListObjectsOutput, ListObjectsRequest, Object} from "aws-sdk/clients/s3";
 import { version } from './package.json';
 
@@ -61,13 +62,15 @@ const program: Program = (() => {
         .option('--cloudtrail-index <name>', 'ES index to put cloudtrail events, def: cloudtrail', String, 'cloudtrail')
         .parse(process.argv);
 
+    const result = ProgramV.decode(commander);
+
     return Either.fold(
-        (err: t.Errors): Program => {
-            d.error("FATAL - Unable to validate command line options: %s", err);
-            process.exit(1)
+        (): Program => {
+            d.error(`FATAL - Unable to validate command line options: ${report(result)}`);
+            process.exit(1);
         },
         (v: Program): Program => v,
-    )(ProgramV.decode(commander));
+    )(result);
 })();
 
 /*
