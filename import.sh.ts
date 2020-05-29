@@ -11,9 +11,8 @@
  * - repeat
  */
 
-
 const
-    ES_FILE_CONCURRENCY = 1    /* how many concurrent S3 cloudtrail files to do */
+    ES_FILE_CONCURRENCY = 5    /* how many concurrent S3 cloudtrail files to do */
 ;
 
 import AWS from 'aws-sdk';
@@ -23,11 +22,10 @@ import { Client as ESClient } from '@elastic/elasticsearch';
 import moment from 'moment';
 import debug from 'debug';
 import * as crypto from 'crypto';
-import * as t from 'io-ts';
-import Either from "fp-ts/lib/Either";
-import { reporter as report } from "io-ts-reporters";
 import {ListObjectsOutput, ListObjectsRequest, Object} from "aws-sdk/clients/s3";
 import { version } from './package.json';
+import {Program} from "./validation/program";
+import {Env} from "./validation/environment";
 
 const d = {
     ESError: debug("ElasticSearch:error"),
@@ -37,18 +35,8 @@ const d = {
 
 const createSigner = () => crypto.createHmac('sha256','cloudtrail-elasticsearch-import-C001D00D');
 
-const ProgramV = t.type({
-    bucket: t.string,
-    region: t.string,
-    prefix: t.string,
-    elasticsearch: t.string,
-    workIndex: t.string,
-    cloudtrailIndex: t.string
-});
-
-type Program = Readonly<t.TypeOf<typeof ProgramV>>;
-
 const program: Program = (() => {
+    const { validateProgram } = require('./validation/program');
     const commander = require('commander');
 
     commander
@@ -62,20 +50,13 @@ const program: Program = (() => {
         .option('--cloudtrail-index <name>', 'ES index to put cloudtrail events, def: cloudtrail', String, 'cloudtrail')
         .parse(process.argv);
 
-    const result = ProgramV.decode(commander);
-
-    return Either.fold(
-        (): Program => {
-            d.error(`FATAL - Unable to validate command line options: ${report(result)}`);
-            process.exit(1);
-        },
-        (v: Program): Program => v,
-    )(result);
+    return validateProgram(commander);
 })();
 
-/*
- * TODO put some error / param checking code here
- */
+const env: Env = (() => {
+    const { validateEnvironment } = require('./validation/environment');
+    return validateEnvironment(process.env);
+})();
 
 const ES = (() => {
     if (program.elasticsearch) {
@@ -91,24 +72,6 @@ const ES = (() => {
         process.exit(1);
     }
 })();
-
-/*
- * yah these need to exists
- */
-AWS.config.update({
-    accessKeyId: process.env.AWS_ACCESS_KEY,
-    secretAccessKey: process.env.AWS_SECRET_KEY
-});
-
-const run = async () => {
-    const [, s3Objs] = await Promise.all([
-        ensureIndexes(ES, program.workIndex, program.cloudtrailIndex),
-        generateS3Objs(),
-    ]);
-    await processItems(s3Objs);
-};
-
-run().catch(e => d.error("UNCAUGHT ERROR: %s", e));
 
 /**
  * Ensures the necessary ElasticSearch Indexes Exist
@@ -130,11 +93,11 @@ const ensureIndexes = async(ES: ESClient, workIndexName: string, cloudtrailIndex
 
     const makeWorkIndex = () =>
         ES.indices.create({
-            index: cloudtrailIndexName,
+            index: workIndexName,
             body: {
-                _doc: {
+                mappings: {
                     properties: {
-                        eventTime: {type: "date", format: "date_time_no_millis"}
+                        eventTime: {type: "date"}
                     }
                 }
             },
@@ -144,7 +107,7 @@ const ensureIndexes = async(ES: ESClient, workIndexName: string, cloudtrailIndex
         ES.indices.create({
             index: cloudtrailIndexName,
             body: {
-                _doc: {
+                mappings: {
                     properties: {
                         eventTime: {type: "date", format: "date_time_no_millis"}
                     }
@@ -152,9 +115,13 @@ const ensureIndexes = async(ES: ESClient, workIndexName: string, cloudtrailIndex
             },
         });
 
-    await Promise.all([
-        workIndex.body ? makeWorkIndex() : d.log(`${workIndexName} exists`),
-        CTIndex.body ? makeCTIndex() : d.log(`${cloudtrailIndexName} exists`),
+    await Promise.all<unknown, unknown>([
+        workIndex.body
+            ? Promise.resolve(d(`${workIndexName} exists`))
+            : makeWorkIndex(),
+        CTIndex.body
+            ? Promise.resolve(d(`${cloudtrailIndexName} exists`))
+            : makeCTIndex(),
     ]);
 };
 
@@ -188,7 +155,11 @@ const generateS3Objs = async function*(): AsyncGenerator<Object, void> {
 const processItems = async (objs: AsyncIterator<Object, void>) => {
     d.info("Processing S3 Objects");
 
-    const S3 = new AWS.S3({region: program.region});
+    const S3 = new AWS.S3({
+        region: program.region,
+        accessKeyId: env.AWS_ACCESS_KEY,
+        secretAccessKey: env.AWS_SECRET_KEY
+    });
     const processors: Promise<void>[] = [];
     const processItem = createItemProcessor(S3);
 
@@ -210,6 +181,14 @@ const consumeAll = async <T>(list: AsyncIterator<T, void>, processor: (item: T) 
     }
 };
 
+type LogRecord = {
+    userIdentity?: unknown & {
+        sessionContext?: unknown
+    },
+    requestParameters?: unknown,
+    responseElements?: unknown,
+};
+
 const createItemProcessor = (S3: AWS.S3) => async (obj: Object) => {
     if (!obj.Key) {
         d.ESError(`${obj} has no Key! This should not happen.`);
@@ -223,21 +202,23 @@ const createItemProcessor = (S3: AWS.S3) => async (obj: Object) => {
         .toString("hex");
 
     try {
-        const res = await ES.get({ index: program.workIndex, id });
+        const res = await ES.get({ id, index: program.workIndex }, { ignore: [404] });
         if(res.statusCode === 200) {
             d.info(`skip ${obj.Key}, already exists`);
             return
         }
-        if(res.statusCode !== 200 && res.statusCode !== 404) {
+        if(res.statusCode !== 404) {
             d.ESError(res.body);
             return
         }
         d.info(`Processing ${obj.Key}`);
 
-        const stream = S3.getObject({
-            Bucket: program.bucket,
-            Key: obj.Key,
-        }).createReadStream()
+        const stream = S3
+            .getObject({
+                Bucket: program.bucket,
+                Key: obj.Key,
+            })
+            .createReadStream()
             .pipe(zlib.createGunzip());
 
         let jsonSrc = "";
@@ -245,33 +226,64 @@ const createItemProcessor = (S3: AWS.S3) => async (obj: Object) => {
             jsonSrc += data.toString();
         }
 
-        const json = JSON.parse(jsonSrc);
+        const json = JSON.parse(jsonSrc) as { Records: LogRecord[] };
 
-        const bulk = json.Records.map((record: {}) => ({
-            index: {
-                index: program.cloudtrailIndex,
-                data: record,
-            },
-        }));
+        const bulk: object[] = json.Records.flatMap(
+            record => [
+                { index: { _index: program.cloudtrailIndex } },
+                {
+                    ...record,
+                    userIdentity: record.userIdentity
+                        ? {
+                            ...record.userIdentity,
+                            sessionContext: record.userIdentity.sessionContext
+                                ? JSON.stringify(record.userIdentity.sessionContext)
+                                : undefined
+                        }
+                        : undefined,
+                    requestParameters: record.requestParameters
+                        ? JSON.stringify(record.requestParameters)
+                        : undefined,
+                    responseElements: record.responseElements
+                        ? JSON.stringify(record.responseElements)
+                        : undefined,
+                    raw: JSON.stringify(record),
+                }
+            ]
+        );
 
-        const doc = {
-            id,
-            key: obj.Key,
-            timestamp: moment().format()
-        };
-
-        bulk.push({
-            index: {
-                index: program.workIndex,
-                data: doc,
-                id
+        bulk.push(
+            { index: { _index: program.workIndex } },
+            {
+                id,
+                key: obj.Key,
+                timestamp: moment().format(),
             }
-        });
+        );
 
-        await ES.bulk(bulk);
+        await ES.bulk({
+            body: bulk
+        });
     } catch(e) {
         d.ESError(`Error importing ${obj.Key}: %s`, e);
         // Continue processing in case of error.
     }
 };
 
+const run = async () => {
+    const [, s3Objs] = await Promise.all([
+        ensureIndexes(ES, program.workIndex, program.cloudtrailIndex),
+        generateS3Objs(),
+    ]);
+    await processItems(s3Objs);
+};
+
+// Run forever until explicitly closed with a `process.exit()`
+setInterval(() => {}, 0x7FFFFFFF);
+
+run()
+    .then(() => process.exit(0))
+    .catch(e => {
+        d.error("UNCAUGHT ERROR: %s", e);
+        process.exit(255);
+    });

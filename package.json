@@ -3,7 +3,6 @@
   "name": "cloudtrail-es-importer",
   "description": "Downloads Cloudtrail logs and puts them into ElasticSearch",
   "version": "0.1.0",
-  "type": "module",
   "repository": {
     "url": ""
   },
@@ -18,6 +17,7 @@
     "debug": "~4.2.0",
     "fp-ts": "^2.6.2",
     "io-ts": "^2.2.4",
+    "io-ts-reporters": "^1.0.0",
     "moment": "~2.26.0"
   },
   "devDependencies": {
