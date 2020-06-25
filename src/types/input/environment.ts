@@ -1,6 +1,8 @@
-import * as t from "io-ts";
+import * as t from "io-ts"
+import * as D from "io-ts/lib/Decoder";
 import * as Either from "fp-ts/lib/Either";
-import {reporter as report} from "io-ts-reporters";
+import * as Tree from "fp-ts/lib/Tree";
+import * as B from "../basics";
 import debug from "debug";
 
 const d = debug("validation:environment");
@@ -14,37 +16,36 @@ interface AWSSecretKeyBrand {
 }
 
 // Ensure key and secret are either both set and in proper format, or both unset.
-const EnvV = t.union([
-    t.type({
-        AWS_ACCESS_KEY: t.brand(
-            t.string,
+const Env = D.union(
+    D.type({
+        AWS_ACCESS_KEY: D.refinement(
+            D.string,
             (s): s is t.Branded<string, AWSAccessKeyBrand> =>
                 /(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/.test(s),
             "AWSAccessKey"
         ),
-        AWS_SECRET_KEY: t.brand(
-            t.string,
+        AWS_SECRET_KEY: D.refinement(
+            D.string,
             (s): s is t.Branded<string, AWSSecretKeyBrand> =>
                 /(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/.test(s),
             "AWSSecretKey"
         ),
     }),
-    t.type({
-        AWS_ACCESS_KEY: t.undefined,
-        AWS_SECRET_KEY: t.undefined,
+    D.type({
+        AWS_ACCESS_KEY: B.undef,
+        AWS_SECRET_KEY: B.undef,
     }),
-]);
+);
 
-export type Env = t.TypeOf<typeof EnvV>;
+export type Env = D.TypeOf<typeof Env>;
 
-export const validateEnvironment = (unsafeEnv: unknown): Env => {
-    const result = EnvV.decode(unsafeEnv);
-    return Either.fold(
-        (): Env => {
-            d(`FATAL - Unable to validate command line options: ${report(result)}`);
-            process.exit(1);
+export const validateEnvironment = (unsafeEnv: unknown): Env | null => {
+    const result = Env.decode(unsafeEnv);
+    return Either.getOrElseW(
+        (e: D.DecodeError) => {
+            d(`FATAL - Unable to validate command line options: ${Tree.drawForest(e)}`);
+            return null;
         },
-        (v: Env): Env => v,
     )(result);
 };
 
