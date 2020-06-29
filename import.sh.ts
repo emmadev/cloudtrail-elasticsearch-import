@@ -17,13 +17,12 @@ import { Client as ESClient } from '@elastic/elasticsearch';
 import debug from 'debug';
 import { version } from './package.json';
 
-import {Program} from "./src/types/input/program";
-import {Env} from "./src/types/input/environment";
+import {Program} from "./import/types/input/program";
 
-import {cloudtrailLogRecordExtractor} from "./src/extraction/cloudtrail-log-records";
-import {convertCloudtrailToElasticsearch} from "./src/transformation/cloudtrail-to-elasticsearch";
-import {elasticsearchLogRecordLoader} from "./src/load/elasticsearch-log-records";
-import {batch} from "./src/common/batch";
+import {cloudtrailLogRecordExtractor} from "./import/extraction/cloudtrail-log-records";
+import {convertCloudtrailToElasticsearch} from "./import/transformation/cloudtrail-to-elasticsearch";
+import {elasticsearchLogRecordLoader} from "./import/load/elasticsearch-log-records";
+import {batch} from "./import/common/batch";
 
 const d = {
     ESError: debug("ElasticSearch:error"),
@@ -31,61 +30,125 @@ const d = {
     error: debug("error")
 };
 
-const program: Program = (() => {
-    const { validateProgram } = require('./src/types/input/program');
-    const commander = require('commander');
+const parseProgram = async () => {
+    const { validateProgram } = require('./import/types/input/program');
+    const tcl = require('@rushstack/ts-command-line');
+    const parser = new tcl.DynamicCommandLineParser({
+        toolFilename: "import.sh.ts",
+        toolDescription: "A simple ETL script for transferring CloudTrail logs from S3 to Elasticsearch",
+    });
 
-    commander
-        .version(version)
-        .option('-b, --bucket <sourcebucket>', 'Bucket with cloudtrail logs', String, '')
-        .option('-r, --region <bucket region>', 'Default region: us-east-1', String, 'us-east-1')
-        .option('-p, --prefix <prefix>', 'prefix where to start listing objects')
+    parser.defineFlagParameter({
+        parameterLongName: "--version",
+        parameterShortName: "-v",
+        description: "Display the version number and exit.",
+    });
 
-        .option('-c, --parallelism <#>', 'number of concurrent workers, default: 5', parseInt, 5)
-        .option('-s, --batch-size <#>', 'batch import size, default: 10000', parseInt, 10_000)
+    parser.defineStringParameter({
+        parameterLongName: "--bucket",
+        parameterShortName: "-b",
+        argumentName: "source bucket",
+        description: "Bucket with cloudtrail logs",
+    });
+    parser.defineStringParameter({
+        parameterLongName: "--region",
+        parameterShortName: "-r",
+        argumentName: "bucket region",
+        defaultValue: "us-east-1",
+    });
+    parser.defineStringParameter({
+        parameterLongName: "--prefix",
+        parameterShortName: "-p",
+        argumentName: "prefix",
+        description: "prefix to use when listing S3 objects",
+    });
 
-        .option('-e, --elasticsearch <url>', 'ES base, ie: https://host:port', String, '')
-        .option('--work-index <name>', 'ES index to record imported files, def: cloudtrail-imported', String, 'cloudtrail-import-log')
-        .option('--cloudtrail-index <name>', 'ES index to put cloudtrail events, def: cloudtrail', String, 'cloudtrail')
-        .parse(process.argv);
+    parser.defineIntegerParameter({
+        parameterLongName: "--parallelism",
+        parameterShortName: "-w",
+        argumentName: "workers",
+        description: "number of concurrent workers",
+        defaultValue: 5,
+    });
+    parser.defineIntegerParameter({
+        parameterLongName: "--batch-size",
+        parameterShortName: "-s",
+        argumentName: "records",
+        description: "max number of records in a batch",
+        defaultValue: 10_000,
+    });
 
-    return validateProgram(commander) || process.exit(1);
-})();
+    parser.defineStringParameter({
+        parameterLongName: "--elasticsearch",
+        parameterShortName: "-e",
+        argumentName: "url",
+        description: "Elasticsearch base, e.g. https://host:9200",
+    });
+    parser.defineStringParameter({
+        parameterLongName: "--work-index",
+        argumentName: "name",
+        description: "Elasticsearch index to record imported files",
+        defaultValue: "cloudtrail-import-log",
+    });
+    parser.defineStringParameter({
+        parameterLongName: "--cloudtrail-index",
+        argumentName: "name",
+        description: "Elasticsearch index to add cloudtrail events to",
+        defaultValue: "cloudtrail",
+    });
 
-const env: Env = (() => {
-    const { validateEnvironment } = require('./src/types/input/environment');
-    return validateEnvironment(process.env) || process.exit(1);
-})();
+    parser.defineStringParameter({
+        environmentVariable: "AWS_ACCESS_KEY",
+        argumentName: "key",
+        description: "AWS Access (public) Key",
+    });
+    parser.defineStringParameter({
+        environmentVariable: "AWS_SECRET_KEY",
+        argumentName: "secret",
+        description: "AWS Secret (private) Key",
+    });
 
-const ES = (() => {
-    if (program.elasticsearch) {
-        const esUrl = new URL(program.elasticsearch);
-        esUrl.port = esUrl.port || '9200';
-        return new ESClient({
-            node: {
-                url: esUrl,
-            },
-        });
-    } else {
-        console.error("--elasticsearch required");
+    await parser.execute(process.argv);
+
+    if(parser.version) {
+        console.log(version);
         process.exit(1);
     }
-})();
 
-const S3 = new AWS.S3({
-    region: program.region,
-    accessKeyId: env.AWS_ACCESS_KEY,
-    secretAccessKey: env.AWS_SECRET_KEY
-});
+    return validateProgram(parser) || process.exit(1);
+};
 
-const batchLogImport = batch(program.parallelism, program.batchSize)(
+const batchLogImport = (program: Program) => batch(
     cloudtrailLogRecordExtractor,
     convertCloudtrailToElasticsearch,
     elasticsearchLogRecordLoader
-);
+)(program.parallelism, program.batchSize);
 
 const run = async () => {
-    await batchLogImport({
+    const program = await parseProgram();
+
+    const ES = (() => {
+        if (program.elasticsearch) {
+            const esUrl = new URL(program.elasticsearch);
+            esUrl.port = esUrl.port || '9200';
+            return new ESClient({
+                node: {
+                    url: esUrl,
+                },
+            });
+        } else {
+            console.error("--elasticsearch required");
+            process.exit(1);
+        }
+    })();
+
+    const S3 = new AWS.S3({
+        region: program.region,
+        accessKeyId: program.AWS_ACCESS_KEY,
+        secretAccessKey: program.AWS_SECRET_KEY,
+    });
+
+    await batchLogImport(program)({
         program, es: ES, s3: S3
     }, {
         program, es: ES

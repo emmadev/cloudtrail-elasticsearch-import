@@ -11,9 +11,16 @@ import * as Tree from "fp-ts/lib/Tree";
 import {DecodeError} from "io-ts/lib/Decoder";
 import {getId} from "../common/get-id";
 import {Readable} from "stream";
-import {nestedYield} from "../common/nested-yield";
+import {Merge} from "../common/merge";
 import moment from "moment";
 
+/**
+ * List all S3 objects at a given prefix
+ *
+ * @param s3 {AWS.S3} S3 Client
+ * @param program {Program} Command line and environment variables
+ * @yield {AWS.S3.Object} An S3 Object
+ */
 const listS3Objs = async function* (s3: AWS.S3, program: Program): AsyncGenerator<Object, void> {
     const d = debug("listS3Objs");
 
@@ -40,6 +47,13 @@ const listS3Objs = async function* (s3: AWS.S3, program: Program): AsyncGenerato
     }
 };
 
+/**
+ * Check if an S3 object has already been imported
+ * @param program {Program} Command line and environment variables
+ * @param es {ESClient} Elasticsearch client
+ * @param key {string} S3 key to mark in Elasticsearch
+ * @return {Promise<boolean>} Promise of whether the object is already imported.
+ */
 export const alreadyFinished = async (program: Program, es: ESClient, key: string): Promise<boolean> => {
     const d = debug("alreadyFinished");
     const id = getId(program.bucket, key);
@@ -54,6 +68,12 @@ export const alreadyFinished = async (program: Program, es: ESClient, key: strin
     return false;
 };
 
+/**
+ * Mark that we are finished importing an S3 object
+ * @param program {Program} Command line and environment variables
+ * @param es {ESClient} Elasticsearch client
+ * @param key {string} S3 key to mark in Elasticsearch
+ */
 export const markFinished = async (program: Program, es: ESClient, key: string): Promise<void> => {
     await es.index({
         index: program.workIndex,
@@ -65,6 +85,13 @@ export const markFinished = async (program: Program, es: ESClient, key: string):
     });
 };
 
+/**
+ * Read a GZipped object from S3
+ * @param s3 {AWS.S3} The S3 Client
+ * @param bucket {string} The S3 Bucket
+ * @param key {string} The key of the object in the bucket
+ * @return A NodeJS stream of the unzipped S3 object.
+ */
 export const readGzipS3Stream = (s3: AWS.S3, bucket: string, key: string): Readable =>
     s3.getObject({
         Bucket: bucket,
@@ -73,6 +100,11 @@ export const readGzipS3Stream = (s3: AWS.S3, bucket: string, key: string): Reada
     .createReadStream()
     .pipe(zlib.createGunzip());
 
+/**
+ * Asynchronously read a NodeJS stream
+ * @param readable {Readable} A NodeJS stream
+ * @return {Promise<string>} A promise of the complete stream in memory.
+ */
 export const readAll = async (readable: Readable): Promise<string> => {
     let body = "";
     for await(const data of readable) {
@@ -81,6 +113,13 @@ export const readAll = async (readable: Readable): Promise<string> => {
     return body;
 };
 
+/**
+ * Parse cloudtrail log entries from a raw JSON string.
+ * @param key {string} The S3 Key (for error messages)
+ * @param jsonSrc {string} The JSON to parse
+ * @return {CloudtrailLog | null} The parsed log, or null (accompanied by an error
+ *                                message in the batch log) if parse failed.
+ */
 export const parseCloudtrailLog = (key: string, jsonSrc: string): CloudtrailLog | null => {
     const d = debug("parseCloudtrailLog");
     let json: unknown;
@@ -100,20 +139,15 @@ export const parseCloudtrailLog = (key: string, jsonSrc: string): CloudtrailLog 
 /**
  * Ensures the necessary ElasticSearch Indexes Exist
  *
- * @method ensureIndexes
+ * @method ensureWorkIndex
  * @param {ESClient} ES initialized Elastical.Client
  * @param {String} workIndexName name of index for keeping track of processed objects
- * @param {String} cloudtrailIndexName name of index for cloudtrail events
  * @return {Promise<void>}
  */
-const ensureIndexes = async (ES: ESClient, workIndexName: string, cloudtrailIndexName: string) => {
-    const d = debug("ensureIndexes");
+const ensureWorkIndex = async (ES: ESClient, workIndexName: string) => {
+    const d = debug("ensureWorkIndex");
     const indices = ES.indices;
-    const [workIndex, CTIndex] =
-        await Promise.all([
-            indices.exists({index: workIndexName}),
-            indices.exists({index: cloudtrailIndexName}),
-        ]);
+    const workIndex = await indices.exists({index: workIndexName});
 
     const makeWorkIndex = () =>
         ES.indices.create({
@@ -127,53 +161,56 @@ const ensureIndexes = async (ES: ESClient, workIndexName: string, cloudtrailInde
             },
         });
 
-    const makeCTIndex = () =>
-        ES.indices.create({
-            index: cloudtrailIndexName,
-            body: {
-                mappings: {
-                    properties: {
-                        eventTime: {type: "date", format: "date_time_no_millis"}
-                    }
-                }
-            },
-        });
-
-    await Promise.all<unknown, unknown>([
-        workIndex.body
-            ? Promise.resolve(d(`${workIndexName} exists`))
-            : makeWorkIndex(),
-        CTIndex.body
-            ? Promise.resolve(d(`${cloudtrailIndexName} exists`))
-            : makeCTIndex(),
-    ]);
+    if (workIndex.body) {
+        d(`${workIndexName} exists`);
+    } else {
+        await makeWorkIndex();
+    }
 };
 
-export const cloudtrailLogRecordExtractor =
-    ({program, s3, es}: ExtractionParams) =>
-    (): AsyncGenerator<CloudtrailLogRecord, void> =>
-        nestedYield((async function*(){
-            const d = debug("cloudtrailLogRecordExtractor");
-            await ensureIndexes(es, program.workIndex, program.cloudtrailIndex);
-            for await (const obj of listS3Objs(s3, program)) {
-                const key: string | undefined = obj.Key;
-                if (!key) {
-                    d(`Object ${obj} has no key; this should not happen.`);
-                } else if (await alreadyFinished(program, es, key)) {
-                    d(`Skip ${obj.Key}; already exists.`);
-                } else {
-                    yield((async function*() {
-                        d(`Processing ${key}`);
-                        const jsonSrc = await readAll(readGzipS3Stream(s3, program.bucket, key));
-                        const log: CloudtrailLog | null = parseCloudtrailLog(key, jsonSrc);
+/** Yields all records in an S3 object.
+ *
+ * @param s3 {AWS.S3}
+ * @param es {ESClient}
+ * @param program {Program} Command Line and Environment variables
+ * @yield {CloudtrailLogRecord} The records in the S3 Object
+ */
+const eachRecord =
+    (s3: AWS.S3, es: ESClient, program: Program) =>
+    async function*(obj: AWS.S3.Object): AsyncIterable<CloudtrailLogRecord> {
+        const d = debug("eachRecord");
 
-                        if (log) {
-                            for (const record of log.Records) {
-                                yield { ...record };
-                            }
-                            await markFinished(program, es, key);
-                        }
-                    })());
+        const key: string | undefined = obj.Key;
+        if (!key) {
+            d(`Object ${obj} has no key; this should never happen.`);
+        } else if (await alreadyFinished(program, es, key)) {
+            d(`Skip ${obj.Key}; already exists.`);
+        } else {
+            d(`Processing ${key}`);
+            const jsonSrc = await readAll(readGzipS3Stream(s3, program.bucket, key));
+            const log: CloudtrailLog | null = parseCloudtrailLog(key, jsonSrc);
+
+            if (log) {
+                for (const record of log.Records) {
+                    yield {...record};
                 }
+                await markFinished(program, es, key);
             }
-        })());
+        }
+    };
+
+/**
+ *
+ * @param merge {Merge} An implementation of Merge on multiple AsyncIterators.
+ * @param program {Program} Command Line and Environment variables
+ * @param s3 {AWS.S3} S3 Client
+ * @param es {ESClient} Elasticsearch Client
+ */
+export const cloudtrailLogRecordExtractor =
+    (merge: Merge) =>
+    ({program, s3, es}: ExtractionParams) =>
+    async function*(): AsyncIterable<CloudtrailLogRecord> {
+        await ensureWorkIndex(es, program.workIndex);
+        return merge(eachRecord(s3, es, program))(listS3Objs(s3, program));
+    };
+

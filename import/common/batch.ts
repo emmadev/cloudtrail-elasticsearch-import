@@ -1,19 +1,23 @@
-export const batch = (parallelism: number, batchSize: number) => <I, CI, O, CO>(
-    extractor: (inputClient: CI) => () => AsyncGenerator<I, void>,
+import {Merge} from "./merge";
+import {parallelMerge} from "./parallel-merge";
+
+export const batch = <I, CI, O, CO>(
+    extractor: (merge: Merge) => (inputClient: CI) => () => AsyncIterable<I>,
     transform: (record: I) => O[],
-    loader: (outputClient: CO) => (batch: O[]) => Promise<void>,
-) => async (inputClient: CI, outputClient: CO) => {
-    const extract = extractor(inputClient);
-    const load = loader(outputClient);
+    loader: (outputClient: CO) => Promise<(batch: O[]) => Promise<void>>,
+) => (parallelism: number, batchSize: number) =>
+    async (inputClient: CI, outputClient: CO) => {
+    const extract = extractor(parallelMerge(parallelism))(inputClient);
+    const load = await loader(outputClient);
     const workers: (() => Promise<void>)[] = [];
     const extracted = extract();
     for (let i = 0; i < parallelism; i++) {
-        const transformed: AsyncGenerator<O, void> = (async function* () {
+        const transformed: AsyncIterable<O> = (async function* () {
             for await (const input of extracted) {
                 yield* transform(input);
             }
         }());
-        const batched: AsyncGenerator<O[], void> = (async function* () {
+        const batched: AsyncIterable<O[]> = (async function* () {
             let batch: O[] = [];
             for await (const output of transformed) {
                 batch.push(output);
@@ -22,7 +26,9 @@ export const batch = (parallelism: number, batchSize: number) => <I, CI, O, CO>(
                     batch = [];
                 }
             }
-            yield batch;
+            if (batch.length > 0) {
+                yield batch;
+            }
         }());
         workers.push(async () => {
             for await (const batch of batched) {

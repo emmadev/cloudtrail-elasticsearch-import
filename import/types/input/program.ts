@@ -1,24 +1,28 @@
 import * as D from "io-ts/lib/Decoder";
 import * as Either from "fp-ts/lib/Either";
 import * as Tree from "fp-ts/lib/Tree";
+import {Env} from "./environment";
 import debug from "debug";
 
 import * as integer from "../basics/integer";
 
 const d = debug("validation:program");
 
-const Program = D.type({
-    bucket: D.string,
-    region: D.string,
-    prefix: D.string,
-    elasticsearch: D.string,
+export const Program = D.intersection(
+    Env,
+    D.type({
+        bucket: D.string,
+        region: D.string,
+        prefix: D.string,
+        elasticsearch: D.string,
 
-    parallelism: integer.codec,
-    batchSize: integer.codec,
+        parallelism: integer.codec,
+        batchSize: integer.codec,
 
-    workIndex: D.string,
-    cloudtrailIndex: D.string,
-});
+        workIndex: D.string,
+        cloudtrailIndex: D.string,
+    }),
+);
 
 export type Program = Readonly<D.TypeOf<typeof Program>>;
 

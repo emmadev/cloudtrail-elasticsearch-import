@@ -7,16 +7,16 @@ import debug from "debug";
 
 const d = debug("validation:environment");
 
-interface AWSAccessKeyBrand {
+export interface AWSAccessKeyBrand {
     readonly AWSAccessKey: unique symbol
 }
 
-interface AWSSecretKeyBrand {
+export interface AWSSecretKeyBrand {
     readonly AWSSecretKey: unique symbol
 }
 
 // Ensure key and secret are either both set and in proper format, or both unset.
-const Env = D.union(
+export const Env = D.union(
     D.type({
         AWS_ACCESS_KEY: D.refinement(
             D.string,
