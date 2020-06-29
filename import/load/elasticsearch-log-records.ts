@@ -37,20 +37,20 @@ const ensureCloudtrailIndex = async (ES: ESClient, cloudtrailIndexName: string) 
     }
 };
 
-export const elasticsearchLogRecordLoader = async (params: LoadParams) => {
-    await ensureCloudtrailIndex(params.es, params.program.cloudtrailIndex);
+export const elasticsearchLogRecordLoader = async ({es, cloudtrailIndex}: LoadParams) => {
+    await ensureCloudtrailIndex(es, cloudtrailIndex);
     return async (batch: ElasticSearchLogRecord[]) => {
         const d = debug("elasticsearchLogRecordLoader");
         try {
 
             const bulk: object[] = batch.flatMap(
                 record => [
-                    {index: {_index: params.program.cloudtrailIndex}},
+                    {index: {_index: cloudtrailIndex}},
                     record,
                 ]
             );
 
-            await params.es.bulk({
+            await es.bulk({
                 body: bulk
             });
         } catch(e) {
