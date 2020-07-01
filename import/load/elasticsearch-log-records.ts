@@ -5,7 +5,7 @@ import {Client as ESClient} from "@elastic/elasticsearch";
 
 
 /**
- * Ensures the necessary ElasticSearch Indexes Exist
+ * Ensures the cloudrail index exists
  *
  * @method ensureCloudtrailIndex
  * @param {ESClient} ES initialized Elastical.Client
@@ -19,7 +19,7 @@ const ensureCloudtrailIndex = async (ES: ESClient, cloudtrailIndexName: string) 
         await indices.exists({index: cloudtrailIndexName});
 
     const makeCTIndex = () =>
-        ES.indices.create({
+        indices.create({
             index: cloudtrailIndexName,
             body: {
                 mappings: {

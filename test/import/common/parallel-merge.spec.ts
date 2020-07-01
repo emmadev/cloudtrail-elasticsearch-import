@@ -1,4 +1,5 @@
 import {parallelMerge} from "../../../import/common/parallel-merge";
+import moment from "moment";
 
 describe("parallelMerge", () => {
     const takeAll = async <T>(asyncIterable: AsyncIterable<T>): Promise<T[]> => {
@@ -8,6 +9,31 @@ describe("parallelMerge", () => {
         }
         return array;
     };
+
+    it("maps each member of an outer AsyncIterable into an inner AsyncIterable, " +
+        "merging the inner AsyncIterables in parallel, " +
+        "using the specified concurrency", async () => {
+        const innerFn = async function* (word: string) {
+            for (const c of word) {
+                await new Promise(resolve => setTimeout(resolve, 10));
+                yield c;
+            }
+        };
+
+        const outerFn = async function* () {
+            yield "Hello,";
+            yield "world!";
+        };
+
+        const before = moment();
+        const result = await takeAll(parallelMerge(2)(innerFn)(outerFn()));
+        const duration = moment().diff(before);
+
+        expect(duration).toBeLessThan(120);
+        expect(result.join("")).not.toStrictEqual("Hello,world!");
+        expect(result.join("")).toMatch(/.*H.*e.*l.*l.*o.*,.*/);
+        expect(result.join("")).toMatch(/.*w.*o.*r.*l.*d.*!.*/);
+    });
 
     it("is left-identical", async () => {
         const innerFn = async function*(times: number) {

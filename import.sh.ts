@@ -17,8 +17,6 @@ import { Client as ESClient } from '@elastic/elasticsearch';
 import debug from 'debug';
 import { version } from './package.json';
 
-import {Program} from "./import/types/input/program";
-
 import {cloudtrailLogRecordExtractor} from "./import/extraction/cloudtrail-log-records";
 import {convertCloudtrailToElasticsearch} from "./import/transformation/cloudtrail-to-elasticsearch";
 import {elasticsearchLogRecordLoader} from "./import/load/elasticsearch-log-records";
@@ -118,28 +116,23 @@ const parseProgram = async () => {
     return validateProgram(parser) || process.exit(1);
 };
 
-const batchLogImport = (program: Program) => batch(
+const batchLogImport = batch(
     cloudtrailLogRecordExtractor,
     convertCloudtrailToElasticsearch,
     elasticsearchLogRecordLoader
-)(program.parallelism, program.batchSize);
+);
 
 const run = async () => {
     const program = await parseProgram();
 
     const ES = (() => {
-        if (program.elasticsearch) {
-            const esUrl = new URL(program.elasticsearch);
-            esUrl.port = esUrl.port || '9200';
-            return new ESClient({
-                node: {
-                    url: esUrl,
-                },
-            });
-        } else {
-            console.error("--elasticsearch required");
-            process.exit(1);
-        }
+        const esUrl = new URL(program.elasticsearch);
+        esUrl.port = esUrl.port || '9200';
+        return new ESClient({
+            node: {
+                url: esUrl,
+            },
+        });
     })();
 
     const S3 = new AWS.S3({
@@ -148,10 +141,15 @@ const run = async () => {
         secretAccessKey: program.AWS_SECRET_KEY,
     });
 
-    await batchLogImport(program)({
-        program, es: ES, s3: S3
+    await batchLogImport(program.parallelism, program.batchSize)({
+        es: ES,
+        workIndex: program.workIndex,
+        s3: S3,
+        bucket: program.bucket,
+        prefix: program.prefix,
     }, {
-        program, es: ES
+        es: ES,
+        cloudtrailIndex: program.cloudtrailIndex,
     });
 };
 

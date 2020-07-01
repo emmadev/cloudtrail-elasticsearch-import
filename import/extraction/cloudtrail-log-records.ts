@@ -1,4 +1,8 @@
-import {ListObjectsOutput, ListObjectsRequest, Object} from "aws-sdk/clients/s3";
+import {
+    ListObjectsV2Output,
+    ListObjectsV2Request,
+    Object
+} from "aws-sdk/clients/s3";
 import {CloudtrailLog, CloudtrailLogRecord} from "../types/log/cloudtrail-log";
 import * as AWS from "aws-sdk";
 import debug from "debug";
@@ -25,23 +29,23 @@ import moment from "moment";
 const listS3Objs = async function* (s3: AWS.S3, bucket: string, prefix: string): AsyncGenerator<Object, void> {
     const d = debug("listS3Objs");
 
-    const params: ListObjectsRequest = {Bucket: bucket, Prefix: prefix};
+    const params: ListObjectsV2Request = {Bucket: bucket, Prefix: prefix};
 
     try {
-        let objs: ListObjectsOutput;
+        let objs: ListObjectsV2Output;
         do {
             /* fetch a list of all the objects to be processed based on the prefix */
-            d("Fetching %s with marker: %s", prefix, params.Marker);
-            objs = await s3.listObjects(params).promise();
+            d("Fetching %s with marker: %s", prefix, params.ContinuationToken);
+            objs = await s3.listObjectsV2(params).promise();
             if (objs.Contents) {
+                if (objs.NextContinuationToken) {
+                    params.ContinuationToken = objs.NextContinuationToken;
+                }
                 for (const obj of objs.Contents) {
                     yield obj;
                 }
-                if (objs.IsTruncated) {
-                    params.Marker = objs.NextMarker;
-                }
             }
-        } while (objs.IsTruncated);
+        } while (objs.NextContinuationToken);
     } catch (e) {
         d("ERROR: %s", e);
         throw e;
@@ -140,7 +144,7 @@ export const parseCloudtrailLog = (key: string, jsonSrc: string): CloudtrailLog 
 };
 
 /**
- * Ensures the necessary ElasticSearch Indexes Exist
+ * Ensures the work index exists
  *
  * @method ensureWorkIndex
  * @param {ESClient} ES initialized Elastical.Client
@@ -220,3 +224,6 @@ export const cloudtrailLogRecordExtractor =
         return merge(eachRecord(s3, es, workIndex, bucket))(listS3Objs(s3, bucket, prefix));
     };
 
+export const _private = {
+    listS3Objs,
+};
