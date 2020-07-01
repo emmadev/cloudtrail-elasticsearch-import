@@ -109,6 +109,9 @@ export class ESFake implements ES.Client {
         index: string,
         body?: HasFakeMappings,
     }): Promise<unknown> {
+        if (this._indices[params.index]) {
+            throw new Error(`Index ${params.index} exists`);
+        }
         const index: FakeIndex = {
             records: {},
             mappings: {
@@ -118,7 +121,7 @@ export class ESFake implements ES.Client {
         if (params.body?.mappings) {
             index.mappings = params.body.mappings;
         }
-        this._indices[params.index] = this._indices[params.index] || index;
+        this._indices[params.index] = index;
         return {};
     }
 

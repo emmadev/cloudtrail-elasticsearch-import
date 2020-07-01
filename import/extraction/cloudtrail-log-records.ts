@@ -26,7 +26,7 @@ import moment from "moment";
  * @yield {AWS.S3.Object} An S3 Object
  * @throws If there was a problem in the S3 call
  */
-const listS3Objs = async function* (s3: AWS.S3, bucket: string, prefix: string): AsyncGenerator<Object, void> {
+const listS3Objs = async function* (s3: AWS.S3, bucket: string, prefix: string): AsyncIterable<Object> {
     const d = debug("listS3Objs");
 
     const params: ListObjectsV2Request = {Bucket: bucket, Prefix: prefix};
@@ -129,14 +129,14 @@ export const readAll = async (readable: Readable): Promise<string> => {
  */
 export const parseCloudtrailLog = (key: string, jsonSrc: string): CloudtrailLog | null => {
     const d = debug("parseCloudtrailLog");
-    let json: unknown;
+    let json: Either.Either<DecodeError, unknown>;
     try {
-        json = Either.parseJSON(jsonSrc, e => Tree.make(String(e)));
+        json = Either.parseJSON(jsonSrc, e => [Tree.make(String(e))]);
     } catch (e) {
         d(`Error parsing S3 log at ${key}: ${e}`);
         return null;
     }
-    const validation = CloudtrailLog.decode(json);
+    const validation = Either.chain(CloudtrailLog.decode)(json);
     return Either.getOrElseW((e: DecodeError) => {
         d(`S3 log invalid at ${key}: ${e}`);
         return null;
@@ -185,7 +185,7 @@ const ensureWorkIndex = async (ES: ESClient, workIndexName: string) => {
  */
 const eachRecord =
     (s3: AWS.S3, es: ESClient, workIndex: string, bucket: string) =>
-    async function*(obj: AWS.S3.Object): AsyncIterable<CloudtrailLogRecord> {
+    async function*(obj: {Key?: string | undefined}): AsyncIterable<CloudtrailLogRecord> {
         const d = debug("eachRecord");
 
         const key: string | undefined = obj.Key;
@@ -208,6 +208,8 @@ const eachRecord =
     };
 
 /**
+ * Extract all log records from an S3 bucket at a specified prefix. Mark each
+ * log file complete in Elasticsearch when it completes.
  *
  * @param merge {Merge} An implementation of Merge on multiple AsyncIterators.
  * @param workIndex {string} The Elasticsearch Work Index (for marking progress)
@@ -221,9 +223,16 @@ export const cloudtrailLogRecordExtractor =
     ({workIndex, bucket, prefix, s3, es}: ExtractionParams) =>
     async function*(): AsyncIterable<CloudtrailLogRecord> {
         await ensureWorkIndex(es, workIndex);
-        return merge(eachRecord(s3, es, workIndex, bucket))(listS3Objs(s3, bucket, prefix));
+        yield* merge(eachRecord(s3, es, workIndex, bucket))(listS3Objs(s3, bucket, prefix));
     };
 
 export const _private = {
     listS3Objs,
+    alreadyFinished,
+    markFinished,
+    readGzipS3Stream,
+    readAll,
+    parseCloudtrailLog,
+    ensureWorkIndex,
+    eachRecord,
 };

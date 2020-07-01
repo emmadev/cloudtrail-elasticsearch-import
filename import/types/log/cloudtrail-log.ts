@@ -2,16 +2,19 @@ import * as C from "io-ts/lib/Codec";
 import * as json from "../basics/json";
 
 export const CloudtrailLogRecord =
-    C.partial({
-        userIdentity: C.intersection(
-            C.record(json.codec),
-            C.partial({
-                sessionContext: json.codec,
-            }),
-        ),
-        requestParameters: json.codec,
-        responseElements: json.codec,
-    });
+    C.intersection(
+        C.record(json.codec),
+        C.partial({
+            userIdentity: C.intersection(
+                C.record(json.codec),
+                C.partial({
+                    sessionContext: json.codec,
+                }),
+            ),
+            requestParameters: json.codec,
+            responseElements: json.codec,
+        }),
+    );
 
 export type CloudtrailLogRecord = C.TypeOf<typeof CloudtrailLogRecord>;
 

@@ -31,7 +31,7 @@ describe("Elasticsearch Fake", () => {
                     shell: true,
                     env: {
                         TMPDIR: tmpdir,
-                        ES_VERSION: "7.8.0",
+                        ES_VERSION: "7.7.1",
                     }
                 },
             );
@@ -93,13 +93,26 @@ describe("Elasticsearch Fake", () => {
     parity("Can create an index and check for its existence", async (es) => {
         const indexName = `testing-index-${Math.floor(Math.random() * 4294967296)}`;
 
-        let exists = await es.indices.exists({ index: indexName });
+        let exists = await es.indices.exists({index: indexName});
         expect(exists.body).toBeFalsy();
         await es.indices.create({
             index: indexName
         });
         exists = await es.indices.exists({index: indexName});
         expect(exists.body).toBeTruthy();
+    });
+
+    parity("Gets an error when trying to create an index that already exists", async (es) => {
+        const indexName = `testing-index-${Math.floor(Math.random() * 4294967296)}`;
+
+        await expect((async () => {
+            await es.indices.create({
+                index: indexName
+            });
+            await es.indices.create({
+                index: indexName
+            });
+        })()).rejects.toThrow();
     });
 
     parity("Can index a document and see that it was indexed", async (es) => {
