@@ -348,6 +348,10 @@ describe("Cloudtrail Extractor", () => {
                     await asyncIterator.next();
                     await asyncIterator.next();
 
+                    // At this point the generator function can yield no more records for the log object,
+                    // but has not exited the inner loop. Calling .next again allows the generator
+                    // function to proceed with marking the object finished in the work index before
+                    // re-entering the inner loop for the next log object.
                     expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-1`)).toBeFalsy();
                     await asyncIterator.next();
                     expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-1`)).toBeTruthy();
