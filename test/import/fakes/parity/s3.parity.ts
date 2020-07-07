@@ -124,4 +124,58 @@ describe("S3 Fake", () => {
             expect(allContents.some(object => object.Key === `/test/test-object-${i+1}`)).toBeTruthy();
         }
     });
+
+    parity("ListObjects returns a different ETag if the content changes.", async s3 => {
+        const bucketName = `testing-bucket-${Math.floor(Math.random() * 4294967296)}`;
+        await s3.createBucket({Bucket: bucketName}).promise();
+        await s3.putObject({
+            Bucket: bucketName,
+            Key: `/test/test-object`,
+            Body: "This is test content.",
+        }).promise();
+
+        let listResponse = await s3.listObjectsV2({
+            Bucket: bucketName,
+            Prefix: "/test",
+        }).promise();
+
+        expect(listResponse.Contents).toHaveLength(1);
+        const originalEtag = listResponse.Contents![0].ETag;
+
+        await s3.putObject({
+            Bucket: bucketName,
+            Key: `/test/test-object`,
+            Body: "THIS IS TEST CONTENT!",
+        }).promise();
+
+        listResponse = await s3.listObjectsV2({
+            Bucket: bucketName,
+            Prefix: "/test",
+        }).promise();
+        expect(listResponse.Contents).toHaveLength(1);
+        const updatedEtag = listResponse.Contents![0].ETag;
+
+        expect(updatedEtag).not.toStrictEqual(originalEtag);
+    });
+
+
+    parity("ListObjects returns the same ETag as returned by PutObject.", async s3 => {
+        const bucketName = `testing-bucket-${Math.floor(Math.random() * 4294967296)}`;
+        await s3.createBucket({Bucket: bucketName}).promise();
+        const {ETag: putETag} = await s3.putObject({
+            Bucket: bucketName,
+            Key: `/test/test-object`,
+            Body: "This is test content.",
+        }).promise();
+
+        const listResponse = await s3.listObjectsV2({
+            Bucket: bucketName,
+            Prefix: "/test",
+        }).promise();
+
+        expect(listResponse.Contents).toHaveLength(1);
+        const listETag = listResponse.Contents![0].ETag;
+
+        expect(listETag).toStrictEqual(putETag);
+    });
 });

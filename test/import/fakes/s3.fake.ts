@@ -4,7 +4,7 @@ import streamifier from "streamifier";
 
 // @ts-ignore
 export class S3Fake implements AWS.S3 {
-    private readonly buckets: {[bucket: string]: {[key: string]: Uint8Array}} = {};
+    private readonly buckets: {[bucket: string]: {[key: string]: Uint8Array & {version: number}}} = {};
 
     private async serialize(body: Buffer | Uint8Array | string | Readable): Promise<Uint8Array> {
         if (body instanceof Uint8Array) {
@@ -42,8 +42,16 @@ export class S3Fake implements AWS.S3 {
         return {
             promise: (async () => {
                 this.buckets[params.Bucket] = this.buckets[params.Bucket] || {};
-                this.buckets[params.Bucket][params.Key] = await this.serialize(params.Body);
-                return {};
+                const serialized: Uint8Array & { version?: number } = await this.serialize(params.Body);
+                if (this.buckets[params.Bucket][params.Key]) {
+                    serialized.version = this.buckets[params.Bucket][params.Key].version + 1;
+                } else {
+                    serialized.version = 1;
+                }
+                this.buckets[params.Bucket][params.Key] = serialized as Uint8Array & { version: number };
+                return {
+                    ETag: `${serialized.version}`,
+                };
             })
         };
     }
@@ -68,6 +76,7 @@ export class S3Fake implements AWS.S3 {
                 Contents:
                     objects.map(key => ({
                         Key: key,
+                        ETag: `${bucket[key].version}`,
                     }))
                 ,
                 IsTruncated: !!nextMarker,

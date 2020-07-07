@@ -67,14 +67,20 @@ describe("Cloudtrail Extractor", () => {
         });
 
         it("alreadyFinished returns false if the object has not been marked finished", async() => {
-            const finished = await _private.alreadyFinished(es, workIndex, bucket, key);
+            const finished = await _private.alreadyFinished(es, workIndex, bucket, key, "a");
             expect(finished).toBeFalsy();
         });
 
-        it("alreadyFinished returns true if the object has been marked finished", async() => {
-            await _private.markFinished(es, workIndex, bucket, key);
-            const finished = await _private.alreadyFinished(es, workIndex, bucket, key);
+        it("alreadyFinished returns true if the object has been marked finished", async () => {
+            await _private.markFinished(es, workIndex, bucket, key, "a");
+            const finished = await _private.alreadyFinished(es, workIndex, bucket, key, "a");
             expect(finished).toBeTruthy();
+        });
+
+        it("alreadyFinished returns false if the object has been marked finished but the etag has changed", async () => {
+            await _private.markFinished(es, workIndex, bucket, key, "a");
+            const finished = await _private.alreadyFinished(es, workIndex, bucket, key, "b");
+            expect(finished).toBeFalsy();
         });
     });
 
@@ -189,6 +195,7 @@ describe("Cloudtrail Extractor", () => {
             let es: ES.Client;
             const workIndex = "work-index";
             const key = "/test-prefix/obj-3";
+            let etag: string;
             beforeEach(async () => {
                 s3 = createS3Fake();
                 es = createESFake();
@@ -205,7 +212,7 @@ describe("Cloudtrail Extractor", () => {
                         },
                     ]
                 });
-                await s3.putObject({
+                etag = (await s3.putObject({
                     Bucket: bucket,
                     Key: key,
                     Body: streamifier
@@ -213,23 +220,28 @@ describe("Cloudtrail Extractor", () => {
                             Buffer.alloc(jsonBody.length, jsonBody)
                         )
                         .pipe(zlib.createGzip()),
-                }).promise();
+                }).promise()).ETag!;
             });
             it("yields every record in the S3 object", async () => {
-                const asyncIterator = _private.eachRecord(s3, es, workIndex, bucket)({Key: key})[Symbol.asyncIterator]();
+                const asyncIterator = _private.eachRecord(s3, es, workIndex, bucket)({Key: key, ETag: etag})[Symbol.asyncIterator]();
 
                 expect(await asyncIterator.next()).toStrictEqual({done: false, value: {a: "b", c: "d"}});
                 expect(await asyncIterator.next()).toStrictEqual({done: false, value: {e: "f", g: "h"}});
                 expect((await asyncIterator.next()).done).toBeTruthy();
             });
             it("yields nothing if the object has already been imported", async () => {
-                await _private.markFinished(es, workIndex, bucket, key);
-                const asyncIterator = _private.eachRecord(s3, es, workIndex, bucket)({Key: key})[Symbol.asyncIterator]();
+                await _private.markFinished(es, workIndex, bucket, key, etag);
+                const asyncIterator = _private.eachRecord(s3, es, workIndex, bucket)({Key: key, ETag: etag})[Symbol.asyncIterator]();
 
                 expect((await asyncIterator.next()).done).toBeTruthy();
             });
             it("yields nothing if the object has no key", async () => {
-                const asyncIterator = _private.eachRecord(s3, es, workIndex, bucket)({})[Symbol.asyncIterator]();
+                const asyncIterator = _private.eachRecord(s3, es, workIndex, bucket)({ETag: etag})[Symbol.asyncIterator]();
+
+                expect((await asyncIterator.next()).done).toBeTruthy();
+            });
+            it("yields nothing if the object has no etag", async () => {
+                const asyncIterator = _private.eachRecord(s3, es, workIndex, bucket)({Key: key})[Symbol.asyncIterator]();
 
                 expect((await asyncIterator.next()).done).toBeTruthy();
             });
@@ -250,6 +262,7 @@ describe("Cloudtrail Extractor", () => {
         let es: ES.Client;
         const workIndex = "work-index";
         const prefix = "/test-prefix";
+        let etag1: string, etag2: string, etag3: string;
 
         beforeEach(async () => {
             s3 = createS3Fake();
@@ -291,7 +304,7 @@ describe("Cloudtrail Extractor", () => {
                     },
                 ]
             });
-            await s3.putObject({
+            etag1 = (await s3.putObject({
                 Bucket: bucket,
                 Key: `${prefix}/obj-1`,
                 Body: streamifier
@@ -299,8 +312,8 @@ describe("Cloudtrail Extractor", () => {
                         Buffer.alloc(jsonBody1.length, jsonBody1)
                     )
                     .pipe(zlib.createGzip()),
-            }).promise();
-            await s3.putObject({
+            }).promise()).ETag!;
+            etag2 = (await s3.putObject({
                 Bucket: bucket,
                 Key: `${prefix}/obj-2`,
                 Body: streamifier
@@ -308,8 +321,8 @@ describe("Cloudtrail Extractor", () => {
                         Buffer.alloc(jsonBody2.length, jsonBody2)
                     )
                     .pipe(zlib.createGzip()),
-            }).promise();
-            await s3.putObject({
+            }).promise()).ETag!;
+            etag3 = (await s3.putObject({
                 Bucket: bucket,
                 Key: `${prefix}/obj-3`,
                 Body: streamifier
@@ -317,7 +330,7 @@ describe("Cloudtrail Extractor", () => {
                         Buffer.alloc(jsonBody3.length, jsonBody3)
                     )
                     .pipe(zlib.createGzip()),
-            }).promise();
+            }).promise()).ETag!;
         });
 
         const extractor = cloudtrailLogRecordExtractor(sequentialMerge);
@@ -352,19 +365,19 @@ describe("Cloudtrail Extractor", () => {
                     // but has not exited the inner loop. Calling .next again allows the generator
                     // function to proceed with marking the object finished in the work index before
                     // re-entering the inner loop for the next log object.
-                    expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-1`)).toBeFalsy();
+                    expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-1`, etag1)).toBeFalsy();
                     await asyncIterator.next();
-                    expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-1`)).toBeTruthy();
-                    await asyncIterator.next();
-
-                    expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-2`)).toBeFalsy();
-                    await asyncIterator.next();
-                    expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-2`)).toBeTruthy();
+                    expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-1`, etag1)).toBeTruthy();
                     await asyncIterator.next();
 
-                    expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-3`)).toBeFalsy();
+                    expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-2`, etag2)).toBeFalsy();
                     await asyncIterator.next();
-                    expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-3`)).toBeTruthy();
+                    expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-2`, etag2)).toBeTruthy();
+                    await asyncIterator.next();
+
+                    expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-3`, etag3)).toBeFalsy();
+                    await asyncIterator.next();
+                    expect(await _private.alreadyFinished(es, workIndex, bucket, `${prefix}/obj-3`, etag3)).toBeTruthy();
                 });
                 it("doesn't extract objects on subsequent runs", async () => {
                     const asyncIterator1 = extractor({workIndex, bucket, prefix, s3, es})()[Symbol.asyncIterator]();
@@ -381,6 +394,31 @@ describe("Cloudtrail Extractor", () => {
                     await s3.putObject({
                         Bucket: bucket,
                         Key: `${prefix}/obj-4`,
+                        Body: streamifier
+                            .createReadStream(
+                                Buffer.alloc(jsonBody4.length, jsonBody4)
+                            )
+                            .pipe(zlib.createGzip()),
+                    }).promise();
+                    const asyncIterator2 = extractor({workIndex, bucket, prefix, s3, es})()[Symbol.asyncIterator]();
+                    expect(await asyncIterator2.next()).toStrictEqual({done: false, value: {y: "z"}});
+                    expect((await asyncIterator2.next()).done).toBeTruthy();
+                });
+                it("extracts changed objects on subsequent runs", async () => {
+                    const asyncIterator1 = extractor({workIndex, bucket, prefix, s3, es})()[Symbol.asyncIterator]();
+                    for (let i = 0; i < 7; i++) {
+                        await asyncIterator1.next();
+                    }
+                    const jsonBody4 = JSON.stringify({
+                        Records: [
+                            {
+                                y: "z",
+                            },
+                        ],
+                    });
+                    await s3.putObject({
+                        Bucket: bucket,
+                        Key: `${prefix}/obj-1`,
                         Body: streamifier
                             .createReadStream(
                                 Buffer.alloc(jsonBody4.length, jsonBody4)

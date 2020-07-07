@@ -11,7 +11,7 @@ describe("Elasticsearch Fake", () => {
     let esProcess: ChildProcess;
 
     beforeAll(async () => {
-        jest.setTimeout(120_000);
+        jest.setTimeout(600_000);
         const tmpdir = await new Promise<string>((res, rej) => {
             dir((err: unknown, path: string, cleanupCb: () => unknown) => {
                 if (err) {
@@ -149,6 +149,47 @@ describe("Elasticsearch Fake", () => {
 
         expect(resp.statusCode).toStrictEqual(200);
         expect(resp.body._source.abc).toStrictEqual(123);
+    });
+
+    parity("Can delete a document and see that it was deleted", async (es) => {
+        const indexName = `testing-index-${Math.floor(Math.random() * 4294967296)}`;
+        const documentId = `id-${Math.floor(Math.random() * 4294967296)}`;
+
+        await es.indices.create({
+            index: indexName
+        });
+
+        let statusCode = (await es.get({
+            index: indexName,
+            id: documentId,
+        }, {
+            ignore: [404],
+        })).statusCode;
+
+        expect(statusCode).toStrictEqual(404);
+
+        await es.index({
+            index: indexName,
+            id: documentId,
+            body: {
+                abc: 123,
+            }
+        });
+
+        let resp = await es.delete({
+            index: indexName,
+            id: documentId,
+        });
+        expect(resp.statusCode).toStrictEqual(200);
+
+        resp = await es.get({
+            index: indexName,
+            id: documentId,
+        }, {
+            ignore: [404],
+        });
+
+        expect(resp.statusCode).toStrictEqual(404);
     });
 
     parity("Can index a document with a date field and get back a moment-able value", async (es) => {

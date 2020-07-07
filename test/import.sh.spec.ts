@@ -13,6 +13,15 @@ describe("import.sh.ts", () => {
     let s3Fake: AWS.S3;
     let esFake: ESClient;
 
+    const mockExternals = () => {
+        jest.mock('aws-sdk', () => ({
+            S3: jest.fn().mockImplementation(() => s3Fake)
+        }));
+        jest.mock('@elastic/elasticsearch', () => ({
+            Client: jest.fn().mockImplementation(() => esFake)
+        }));
+    };
+
     beforeEach(() => {
         jest.setTimeout(30_000);
         process.argv = [];
@@ -20,13 +29,7 @@ describe("import.sh.ts", () => {
 
         s3Fake = createS3Fake();
         esFake = createESFake();
-
-        jest.mock('aws-sdk', () => ({
-            S3: jest.fn().mockImplementation(() => s3Fake)
-        }));
-        jest.mock('@elastic/elasticsearch', () => ({
-            Client: jest.fn().mockImplementation(() => esFake)
-        }));
+        mockExternals();
     });
 
     it("Imports all records from all logs at the given prefix in the given bucket", async () => {
@@ -218,12 +221,243 @@ describe("import.sh.ts", () => {
         });
     });
 
+    it("Doesn't reimport a log if it hasn't changed", async () => {
+        const bucketName = "cloudtrail-bucket";
+        const prefix = "log-prefix";
+        const workIndex = "work-index";
+        const cloudtrailIndex = "cloudtrail-index";
+
+        await s3Fake.createBucket({Bucket: bucketName}).promise();
+        const log1: CloudtrailLog = {
+            Records: [
+                {
+                    id: "a",
+                    a: 1,
+                    userIdentity: {
+                        b: 2,
+                        sessionContext: {
+                            c: 3,
+                        }
+                    },
+                    requestParameters: {
+                        d: 4,
+                    },
+                    responseElements: {
+                        e: 5,
+                    }
+                },
+            ]
+        };
+        await s3Fake.putObject({
+            Bucket: bucketName,
+            Key: `${prefix}/log1`,
+            Body: streamifier.createReadStream(Buffer.alloc(
+                JSON.stringify(log1).length,
+                JSON.stringify(log1),
+            )).pipe(zlib.createGzip()),
+        }).promise();
+
+        process.argv = [
+            "node", "import.sh.ts",
+            "-b", bucketName,
+            "-r", "us-east-1",
+            "-p", prefix,
+            "-e", "https://fakehost:9200",
+            "--work-index", workIndex,
+            "--cloudtrail-index", cloudtrailIndex,
+        ];
+
+        process.env = {
+            AWS_ACCESS_KEY: "AAAAAAAAAAAAAAAAAAAA",
+            AWS_SECRET_KEY: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa==",
+        };
+
+        jest.useFakeTimers();
+        let systemExit = new Promise(resolve => {
+            jest.spyOn(process, 'exit')
+                // @ts-ignore
+                .mockImplementation(code => resolve(code));
+        });
+
+        require('../import.sh');
+        let exitCode = await systemExit;
+        expect(exitCode).toStrictEqual(0);
+
+        await esFake.delete({ index: cloudtrailIndex, id: "a" });
+        jest.resetModules();
+        mockExternals();
+        jest.useFakeTimers();
+        systemExit = new Promise(resolve => {
+            jest.spyOn(process, 'exit')
+                // @ts-ignore
+                .mockImplementation(code => resolve(code));
+        });
+
+        require('../import.sh');
+        exitCode = await systemExit;
+        expect(exitCode).toStrictEqual(0);
+
+        expect((await esFake.get({
+            index: cloudtrailIndex,
+            id: "a",
+        }, {
+            ignore: [404],
+        })).statusCode).toStrictEqual(404);
+    });
+
+    it("Reimports a log if it has changed", async () => {
+        const bucketName = "cloudtrail-bucket";
+        const prefix = "log-prefix";
+        const workIndex = "work-index";
+        const cloudtrailIndex = "cloudtrail-index";
+
+        await s3Fake.createBucket({Bucket: bucketName}).promise();
+        const log1a: CloudtrailLog = {
+            Records: [
+                {
+                    id: "a",
+                    a: 1,
+                    userIdentity: {
+                        b: 2,
+                        sessionContext: {
+                            c: 3,
+                        }
+                    },
+                    requestParameters: {
+                        d: 4,
+                    },
+                    responseElements: {
+                        e: 5,
+                    }
+                },
+            ]
+        };
+        const log1b: CloudtrailLog = {
+            Records: [
+                {
+                    id: "a",
+                    a: 1,
+                    userIdentity: {
+                        b: 2,
+                        sessionContext: {
+                            c: 3,
+                        }
+                    },
+                    requestParameters: {
+                        d: 4,
+                    },
+                    responseElements: {
+                        e: 5,
+                    }
+                },
+                {
+                    id: "b",
+                    f: 1,
+                    userIdentity: {
+                        g: 2,
+                    },
+                    requestParameters: {
+                        h: 3,
+                    },
+                    responseElements: {
+                        i: 4,
+                    }
+                },
+            ]
+        };
+        await s3Fake.putObject({
+            Bucket: bucketName,
+            Key: `${prefix}/log1`,
+            Body: streamifier.createReadStream(Buffer.alloc(
+                JSON.stringify(log1a).length,
+                JSON.stringify(log1a),
+            )).pipe(zlib.createGzip()),
+        }).promise();
+
+        process.argv = [
+            "node", "import.sh.ts",
+            "-b", bucketName,
+            "-r", "us-east-1",
+            "-p", prefix,
+            "-e", "https://fakehost:9200",
+            "--work-index", workIndex,
+            "--cloudtrail-index", cloudtrailIndex,
+        ];
+
+        process.env = {
+            AWS_ACCESS_KEY: "AAAAAAAAAAAAAAAAAAAA",
+            AWS_SECRET_KEY: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa==",
+        };
+
+        jest.useFakeTimers();
+        let systemExit = new Promise(resolve => {
+            jest.spyOn(process, 'exit')
+                // @ts-ignore
+                .mockImplementation(code => resolve(code));
+        });
+
+        require('../import.sh');
+        let exitCode = await systemExit;
+        expect(exitCode).toStrictEqual(0);
+
+        await s3Fake.putObject({
+            Bucket: bucketName,
+            Key: `${prefix}/log1`,
+            Body: streamifier.createReadStream(Buffer.alloc(
+                JSON.stringify(log1b).length,
+                JSON.stringify(log1b),
+            )).pipe(zlib.createGzip()),
+        }).promise();
+
+        jest.resetModules();
+        mockExternals();
+        jest.useFakeTimers();
+        systemExit = new Promise(resolve => {
+            jest.spyOn(process, 'exit')
+                // @ts-ignore
+                .mockImplementation(code => resolve(code));
+        });
+
+        require('../import.sh');
+        exitCode = await systemExit;
+        expect(exitCode).toStrictEqual(0);
+
+        expect((await esFake.get({
+            index: cloudtrailIndex,
+            id: "a",
+        })).body._source).toStrictEqual({
+            id: "a",
+            a: 1,
+            userIdentity: {
+                b: 2,
+                sessionContext: '{"c":3}',
+            },
+            requestParameters: '{"d":4}',
+            responseElements: '{"e":5}',
+            raw: '{"id":"a","a":1,"userIdentity":{"b":2,"sessionContext":{"c":3}},"requestParameters":{"d":4},"responseElements":{"e":5}}',
+        });
+        expect((await esFake.get({
+            index: cloudtrailIndex,
+            id: "b",
+        })).body._source).toStrictEqual({
+            id: "b",
+            f: 1,
+            userIdentity: {
+                g: 2,
+            },
+            requestParameters: '{"h":3}',
+            responseElements: '{"i":4}',
+            raw: "{\"id\":\"b\",\"f\":1,\"userIdentity\":{\"g\":2},\"requestParameters\":{\"h\":3},\"responseElements\":{\"i\":4}}",
+        });
+    });
+
     afterEach(() => {
         process.argv = processArgvOriginal;
         process.env = processEnvOriginal;
         jest.restoreAllMocks();
         jest.useRealTimers();
         jest.setTimeout(5_000);
+        jest.resetModules();
     });
 
 });

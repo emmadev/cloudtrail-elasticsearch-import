@@ -105,6 +105,21 @@ export class ESFake implements ES.Client {
         return {};
     }
 
+    // @ts-ignore
+    async delete(params: {
+        index: string,
+        id: string,
+    }): Promise<{statusCode: 200 | 404}> {
+        if (!this._indices[params.index]) {
+            return { statusCode: 404 };
+        } else if (!this._indices[params.index].records[params.id]) {
+            return { statusCode: 404 };
+        } else {
+            delete this._indices[params.index].records[params.id];
+            return { statusCode: 200 };
+        }
+    }
+
     private async createIndex(params: {
         index: string,
         body?: HasFakeMappings,

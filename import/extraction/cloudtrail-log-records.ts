@@ -57,15 +57,16 @@ const listS3Objs = async function* (s3: AWS.S3, bucket: string, prefix: string):
  * @param es {ESClient} Elasticsearch client
  * @param workIndex {string} Elasticsearch work index
  * @param bucket {string} S3 bucket of the key to mark in Elasticsearch
- * @param key {string} S3 key to mark in Elasticsearch
+ * @param key {string} S3 key to search in Elasticsearch
+ * @param etag {string} latest S3 etag to compare to Elasticsearch
  * @return {Promise<boolean>} Promise of whether the object is already imported.
  */
-export const alreadyFinished = async (es: ESClient, workIndex: string, bucket: string, key: string): Promise<boolean> => {
+export const alreadyFinished = async (es: ESClient, workIndex: string, bucket: string, key: string, etag: string): Promise<boolean> => {
     const d = debug("alreadyFinished");
     const id = getId(bucket, key);
     const res = await es.get({ id, index: workIndex }, { ignore: [404] });
     if (res.statusCode === 200) {
-        return true;
+        return res.body._source.etag === etag;
     }
     if (res.statusCode !== 404) {
         d(`Error looking up ${id}: ${res.statusCode} ${res.body}`);
@@ -80,13 +81,15 @@ export const alreadyFinished = async (es: ESClient, workIndex: string, bucket: s
  * @param workIndex {string} Elasticsearch work index
  * @param bucket {string} S3 bucket of the key to mark in Elasticsearch
  * @param key {string} S3 key to mark in Elasticsearch
+ * @param etag {string} latest S3 etag to write in Elasticsearch
  */
-export const markFinished = async (es: ESClient, workIndex: string, bucket: string, key: string): Promise<void> => {
+export const markFinished = async (es: ESClient, workIndex: string, bucket: string, key: string, etag: string): Promise<void> => {
     await es.index({
         index: workIndex,
         id: getId(bucket, key),
         body: {
             key: key,
+            etag: etag,
             timestamp: moment().format(),
         }
     });
@@ -185,13 +188,16 @@ const ensureWorkIndex = async (ES: ESClient, workIndexName: string) => {
  */
 const eachRecord =
     (s3: AWS.S3, es: ESClient, workIndex: string, bucket: string) =>
-    async function*(obj: {Key?: string | undefined}): AsyncIterable<CloudtrailLogRecord> {
+    async function*(obj: {Key?: string | undefined, ETag?: string | undefined}): AsyncIterable<CloudtrailLogRecord> {
         const d = debug("eachRecord");
 
         const key: string | undefined = obj.Key;
+        const etag: string | undefined = obj.ETag;
         if (!key) {
             d(`Object ${obj} has no key; this should never happen.`);
-        } else if (await alreadyFinished(es, workIndex, bucket, key)) {
+        } else if (!etag) {
+            d(`Object ${obj} has no ETag; this should never happen.`);
+        } else if (await alreadyFinished(es, workIndex, bucket, key, etag)) {
             d(`Skip ${obj.Key}; already exists.`);
         } else {
             d(`Processing ${key}`);
@@ -202,7 +208,7 @@ const eachRecord =
                 for (const record of log.Records) {
                     yield {...record};
                 }
-                await markFinished(es, workIndex, bucket, key);
+                await markFinished(es, workIndex, bucket, key, etag);
             }
         }
     };
