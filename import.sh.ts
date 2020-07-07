@@ -21,6 +21,7 @@ import {cloudtrailLogRecordExtractor} from "./import/extraction/cloudtrail-log-r
 import {convertCloudtrailToElasticsearch} from "./import/transformation/cloudtrail-to-elasticsearch";
 import {elasticsearchLogRecordLoader} from "./import/load/elasticsearch-log-records";
 import {batch} from "./import/common/batch";
+import {Program} from "./import/types/input/program";
 
 const d = {
     ESError: debug("ElasticSearch:error"),
@@ -30,90 +31,78 @@ const d = {
 
 const parseProgram = async () => {
     const { validateProgram } = require('./import/types/input/program');
-    const tcl = require('@rushstack/ts-command-line');
-    const parser = new tcl.DynamicCommandLineParser({
-        toolFilename: "import.sh.ts",
-        toolDescription: "A simple ETL script for transferring CloudTrail logs from S3 to Elasticsearch",
-    });
+    const args = require('yargs')
+        .env()
+        .option('--version', {
+            alias: '-v',
+            describe: 'Display the version number and exit.',
+            type: 'boolean',
+        })
+        .option('--bucket', {
+            alias: '-b',
+            describe: 'Bucket with cloudtrail logs',
+            demandOption: true,
+            type: 'string',
+        })
+        .option('--region', {
+            alias: '-r',
+            describe: 'The AWS region to use',
+            default: 'us-east-1',
+            type: 'string',
+        })
+        .option('--prefix', {
+            alias: '-p',
+            describe: 'The S3 prefix to search for logs',
+            default: '',
+            type: 'string',
+        })
+        .option('--parallelism', {
+            alias: '-w',
+            describe: 'Number of concurrent workers',
+            default: 5,
+            type: 'number',
+        })
+        .option('--batch-size', {
+            alias: '-s',
+            describe: 'Max number of records per batch',
+            default: 10_000,
+            type: 'number',
+        })
+        .option('--elasticsearch', {
+            alias: '-e',
+            describe: 'Elasticsearch base, e.g. https://host:9200',
+            demandOption: true,
+            type: 'string',
+        })
+        .option('--work-index', {
+            describe: 'Elasticsearch index to record imported logs',
+            default: 'cloudtrail-import-log',
+            type: 'string',
+        })
+        .option('--cloudtrail-index', {
+            describe: 'Elasticsearch index to import into',
+            default: 'cloudtrail',
+            type: 'string',
+        })
+        .option('--aws-access-key', {
+            alias: 'AWS_ACCESS_KEY',
+            describe: 'AWS Access Key (public)',
+            type: 'string',
+        })
+        .option('--aws-secret-key', {
+            alias: 'AWS_SECRET_KEY',
+            describe: 'AWS Secret Key (private)',
+            type: 'string',
+        })
+        .help()
+        .argv;
 
-    parser.defineFlagParameter({
-        parameterLongName: "--version",
-        parameterShortName: "-v",
-        description: "Display the version number and exit.",
-    });
-
-    parser.defineStringParameter({
-        parameterLongName: "--bucket",
-        parameterShortName: "-b",
-        argumentName: "source bucket",
-        description: "Bucket with cloudtrail logs",
-    });
-    parser.defineStringParameter({
-        parameterLongName: "--region",
-        parameterShortName: "-r",
-        argumentName: "bucket region",
-        defaultValue: "us-east-1",
-    });
-    parser.defineStringParameter({
-        parameterLongName: "--prefix",
-        parameterShortName: "-p",
-        argumentName: "prefix",
-        description: "prefix to use when listing S3 objects",
-    });
-
-    parser.defineIntegerParameter({
-        parameterLongName: "--parallelism",
-        parameterShortName: "-w",
-        argumentName: "workers",
-        description: "number of concurrent workers",
-        defaultValue: 5,
-    });
-    parser.defineIntegerParameter({
-        parameterLongName: "--batch-size",
-        parameterShortName: "-s",
-        argumentName: "records",
-        description: "max number of records in a batch",
-        defaultValue: 10_000,
-    });
-
-    parser.defineStringParameter({
-        parameterLongName: "--elasticsearch",
-        parameterShortName: "-e",
-        argumentName: "url",
-        description: "Elasticsearch base, e.g. https://host:9200",
-    });
-    parser.defineStringParameter({
-        parameterLongName: "--work-index",
-        argumentName: "name",
-        description: "Elasticsearch index to record imported files",
-        defaultValue: "cloudtrail-import-log",
-    });
-    parser.defineStringParameter({
-        parameterLongName: "--cloudtrail-index",
-        argumentName: "name",
-        description: "Elasticsearch index to add cloudtrail events to",
-        defaultValue: "cloudtrail",
-    });
-
-    parser.defineStringParameter({
-        environmentVariable: "AWS_ACCESS_KEY",
-        argumentName: "key",
-        description: "AWS Access (public) Key",
-    });
-    parser.defineStringParameter({
-        environmentVariable: "AWS_SECRET_KEY",
-        argumentName: "secret",
-        description: "AWS Secret (private) Key",
-    });
-
-    await parser.execute(process.argv);
-
-    if(parser.version) {
+    if(args.version) {
         console.log(version);
         process.exit(1);
     }
 
-    return validateProgram(parser) || process.exit(1);
+    return validateProgram(args) || process.exit(1);
 };
 
 const batchLogImport = batch(
@@ -123,7 +112,7 @@ const batchLogImport = batch(
 );
 
 const run = async () => {
-    const program = await parseProgram();
+    const program: Program = await parseProgram();
 
     const ES = (() => {
         const esUrl = new URL(program.elasticsearch);

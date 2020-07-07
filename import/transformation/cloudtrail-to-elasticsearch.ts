@@ -6,7 +6,7 @@ export const convertCloudtrailToElasticsearch = (record: CloudtrailLogRecord): E
     const { userIdentity, requestParameters, responseElements, ...input } = record;
     const output: ElasticSearchLogRecord = {
         ...input,
-        raw: JSON.stringify(input),
+        raw: JSON.stringify(record),
     };
     if (requestParameters) {
         output.requestParameters = JSON.stringify(requestParameters);

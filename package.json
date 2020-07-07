@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@elastic/elasticsearch": "^7.7.1",
-    "@rushstack/ts-command-line": "^4.4.5",
     "aws-sdk": "~2.686.0",
     "commander": "~5.1.0",
     "debug": "~4.2.0",
@@ -21,7 +20,8 @@
     "io-ts-reporters": "^1.0.0",
     "iter-tools": "^7.0.0-rc.0",
     "ix": "^3.0.2",
-    "moment": "~2.26.0"
+    "moment": "~2.26.0",
+    "yargs": "^15.4.0"
   },
   "devDependencies": {
     "@types/async": "^3.2.3",
@@ -29,6 +29,7 @@
     "@types/jest": "^26.0.3",
     "@types/node": "^14.0.5",
     "@types/tmp": "^0.2.0",
+    "@types/yargs": "^15.0.5",
     "fast-check": "^1.25.1",
     "io-ts-types": "^0.5.7",
     "jest": "^26.1.0",

@@ -58,3 +58,7 @@ export const elasticsearchLogRecordLoader = async ({es, cloudtrailIndex}: LoadPa
         }
     };
 };
+
+export const _private = {
+    ensureCloudtrailIndex
+};
