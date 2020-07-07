@@ -49,7 +49,7 @@ export const elasticsearchLogRecordLoader = async ({es, cloudtrailIndex}: LoadPa
                     record,
                 ]
             );
-
+            d(`Indexing ${batch.length} records to ${cloudtrailIndex}`);
             await es.bulk({
                 body: bulk
             });

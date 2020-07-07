@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S npx ts-node
 
 /*
  * Steps:
@@ -65,7 +65,7 @@ const parseProgram = async () => {
         .option('--batch-size', {
             alias: '-s',
             describe: 'Max number of records per batch',
-            default: 10_000,
+            default: 1_000,
             type: 'number',
         })
         .option('--elasticsearch', {
