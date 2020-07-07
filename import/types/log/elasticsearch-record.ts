@@ -7,8 +7,7 @@ export const ElasticSearchLogRecord =
     intersection3.encoder(
         E.record(json.encoder),
         E.partial({
-            userIdentity: E.intersection(
-                E.record(json.encoder),
+            userIdentity: E.intersect(E.record(json.encoder))(
                 E.partial({
                     sessionContext: C.string,
                 }),

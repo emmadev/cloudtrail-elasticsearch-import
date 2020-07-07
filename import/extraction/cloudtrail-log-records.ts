@@ -10,8 +10,7 @@ import {ExtractionParams} from "./params";
 import {Client as ESClient} from "@elastic/elasticsearch";
 import * as zlib from "zlib";
 import * as Either from "fp-ts/lib/Either";
-import * as Tree from "fp-ts/lib/Tree";
-import {DecodeError} from "io-ts/lib/Decoder";
+import {error, DecodeError} from "io-ts/lib/Decoder";
 import {getId} from "../common/get-id";
 import {Readable} from "stream";
 import {Merge} from "../common/merge";
@@ -134,7 +133,7 @@ export const parseCloudtrailLog = (key: string, jsonSrc: string): CloudtrailLog 
     const d = debug("parseCloudtrailLog");
     let json: Either.Either<DecodeError, unknown>;
     try {
-        json = Either.parseJSON(jsonSrc, e => [Tree.make(String(e))]);
+        json = Either.parseJSON(jsonSrc, e => error(jsonSrc, `${e}`));
     } catch (e) {
         d(`Error parsing S3 log at ${key}: ${e}`);
         return null;

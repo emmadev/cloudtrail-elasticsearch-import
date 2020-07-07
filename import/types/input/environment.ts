@@ -1,7 +1,6 @@
 import * as t from "io-ts"
 import * as D from "io-ts/lib/Decoder";
 import * as Either from "fp-ts/lib/Either";
-import * as Tree from "fp-ts/lib/Tree";
 import * as B from "../basics";
 import debug from "debug";
 
@@ -18,18 +17,16 @@ export interface AWSSecretKeyBrand {
 // Ensure key and secret are either both set and in proper format, or both unset.
 export const Env = D.union(
     D.type({
-        AWS_ACCESS_KEY: D.refinement(
-            D.string,
-            (s): s is t.Branded<string, AWSAccessKeyBrand> =>
+        AWS_ACCESS_KEY: D.refine(
+            (s: string): s is t.Branded<string, AWSAccessKeyBrand> =>
                 /(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/.test(s),
             "AWSAccessKey"
-        ),
-        AWS_SECRET_KEY: D.refinement(
-            D.string,
-            (s): s is t.Branded<string, AWSSecretKeyBrand> =>
+        )(D.string),
+        AWS_SECRET_KEY: D.refine(
+            (s: string): s is t.Branded<string, AWSSecretKeyBrand> =>
                 /(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/.test(s),
             "AWSSecretKey"
-        ),
+        )(D.string),
     }),
     D.type({
         AWS_ACCESS_KEY: B.undef,
@@ -43,7 +40,7 @@ export const validateEnvironment = (unsafeEnv: unknown): Env | null => {
     const result = Env.decode(unsafeEnv);
     return Either.getOrElseW(
         (e: D.DecodeError) => {
-            d(`FATAL - Unable to validate command line options: ${Tree.drawForest(e)}`);
+            d(`FATAL - Unable to validate command line options: ${D.draw(e)}`);
             return null;
         },
     )(result);

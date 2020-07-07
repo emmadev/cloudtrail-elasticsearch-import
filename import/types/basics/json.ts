@@ -1,21 +1,21 @@
-import * as Decoder from "io-ts/lib/Decoder";
+import * as D from "io-ts/lib/Decoder";
 import {Json} from "io-ts/lib/JsonEncoder";
-import * as Encoder from "io-ts/lib/JsonEncoder";
-import * as Codec from "io-ts/lib/JsonCodec";
+import * as E from "io-ts/lib/JsonEncoder";
+import * as C from "io-ts/lib/JsonCodec";
 
-export const decoder: Decoder.Decoder<Json> =
-    Decoder.lazy("Json", () =>
-        Decoder.nullable(
-            Decoder.union(
-                Decoder.string,
-                Decoder.number,
-                Decoder.boolean,
-                Decoder.record(decoder),
-                Decoder.array(decoder)
+export const decoder: D.Decoder<Json> =
+    D.lazy("Json", () =>
+        D.nullable(
+            D.union(
+                D.string,
+                D.number,
+                D.boolean,
+                D.record(decoder),
+                D.array(decoder)
             )
         )
     );
 
-export const encoder: Encoder.JsonEncoder<Json> = Encoder.id;
+export const encoder: E.JsonEncoder<Json> = E.id<Json>();
 
-export const codec: Codec.JsonCodec<Json> = Codec.make(decoder, encoder);
+export const codec: C.JsonCodec<Json> = C.make(decoder, encoder);

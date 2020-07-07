@@ -168,7 +168,7 @@ describe("import.sh.ts", () => {
             },
             requestParameters: '{"d":4}',
             responseElements: '{"e":5}',
-            raw: '{"id":"a","a":1,"userIdentity":{"b":2,"sessionContext":{"c":3}},"requestParameters":{"d":4},"responseElements":{"e":5}}',
+            raw: '{"userIdentity":{"b":2,"sessionContext":{"c":3}},"requestParameters":{"d":4},"responseElements":{"e":5},"id":"a","a":1}',
         });
         expect((await esFake.get({
             index: cloudtrailIndex,
@@ -181,7 +181,7 @@ describe("import.sh.ts", () => {
             },
             requestParameters: '{"h":3}',
             responseElements: '{"i":4}',
-            raw: "{\"id\":\"b\",\"f\":1,\"userIdentity\":{\"g\":2},\"requestParameters\":{\"h\":3},\"responseElements\":{\"i\":4}}",
+            raw: '{"userIdentity":{"g":2},"requestParameters":{"h":3},"responseElements":{"i":4},"id":"b","f":1}',
         });
         expect((await esFake.get({
             index: cloudtrailIndex,
@@ -191,7 +191,7 @@ describe("import.sh.ts", () => {
             j: 1,
             requestParameters: '{"k":4}',
             responseElements: '{"l":5}',
-            raw: '{"id":"c","j":1,"requestParameters":{"k":4},"responseElements":{"l":5}}',
+            raw: '{"requestParameters":{"k":4},"responseElements":{"l":5},"id":"c","j":1}',
         });
         expect((await esFake.get({
             index: cloudtrailIndex,
@@ -204,7 +204,7 @@ describe("import.sh.ts", () => {
                 sessionContext: '{"o":3}',
             },
             responseElements: '{"p":5}',
-            raw: '{"id":"d","m":1,"userIdentity":{"n":2,"sessionContext":{"o":3}},"responseElements":{"p":5}}',
+            raw: '{"userIdentity":{"n":2,"sessionContext":{"o":3}},"responseElements":{"p":5},"id":"d","m":1}',
         });
         expect((await esFake.get({
             index: cloudtrailIndex,
@@ -217,7 +217,7 @@ describe("import.sh.ts", () => {
                 sessionContext: '{"s":3}',
             },
             requestParameters: '{"t":3}',
-            raw: '{"id":"e","q":1,"userIdentity":{"r":2,"sessionContext":{"s":3}},"requestParameters":{"t":3}}',
+            raw: '{"userIdentity":{"r":2,"sessionContext":{"s":3}},"requestParameters":{"t":3},"id":"e","q":1}',
         });
     });
 
@@ -434,7 +434,7 @@ describe("import.sh.ts", () => {
             },
             requestParameters: '{"d":4}',
             responseElements: '{"e":5}',
-            raw: '{"id":"a","a":1,"userIdentity":{"b":2,"sessionContext":{"c":3}},"requestParameters":{"d":4},"responseElements":{"e":5}}',
+            raw: '{"userIdentity":{"b":2,"sessionContext":{"c":3}},"requestParameters":{"d":4},"responseElements":{"e":5},"id":"a","a":1}',
         });
         expect((await esFake.get({
             index: cloudtrailIndex,
@@ -447,7 +447,7 @@ describe("import.sh.ts", () => {
             },
             requestParameters: '{"h":3}',
             responseElements: '{"i":4}',
-            raw: "{\"id\":\"b\",\"f\":1,\"userIdentity\":{\"g\":2},\"requestParameters\":{\"h\":3},\"responseElements\":{\"i\":4}}",
+            raw: '{"userIdentity":{"g":2},"requestParameters":{"h":3},"responseElements":{"i":4},"id":"b","f":1}',
         });
     });
 

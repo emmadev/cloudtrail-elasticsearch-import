@@ -2,11 +2,9 @@ import * as C from "io-ts/lib/Codec";
 import * as json from "../basics/json";
 
 export const CloudtrailLogRecord =
-    C.intersection(
-        C.record(json.codec),
+    C.intersect(C.record(json.codec))(
         C.partial({
-            userIdentity: C.intersection(
-                C.record(json.codec),
+            userIdentity: C.intersect(C.record(json.codec))(
                 C.partial({
                     sessionContext: json.codec,
                 }),
